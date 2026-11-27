@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retirement Monte Carlo</title>
+<meta name="description" content="Interactive Monte Carlo retirement simulator: GBM, historical bootstrap and fat-tailed returns on 150 years of US data, with Social Security, withdrawal strategies and stress tests.">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f7f7f5; --card: #ffffff; --text: #1d1d1f; --muted: #66666b; --border: #e3e3e0;
+  --field: #ffffff; --accent: #257de0; --accent-text: #ffffff;
+  /* categorical slots (validated reference palette): models + income sources */
+  --s1: #257de0; --s2: #f47230; --s3: #00b894; --s4: #f2a600;
+  --bad: #d03b3b; --good: #1f7a3f; --warn-bg: #fdf3e1;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #141416; --card: #1e1e21; --text: #ececee; --muted: #9c9ca4; --border: #2e2e33;
+    --field: #161618; --accent: #338ced; --accent-text: #ffffff;
+    --s1: #338ced; --s2: #e76624; --s3: #00a888; --s4: #d28e05;
+    --bad: #eb6263; --good: #4cc07d; --warn-bg: #3a2c12;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #141416; --card: #1e1e21; --text: #ececee; --muted: #9c9ca4; --border: #2e2e33;
+  --field: #161618; --accent: #338ced; --accent-text: #ffffff;
+  --s1: #338ced; --s2: #e76624; --s3: #00a888; --s4: #d28e05;
+  --bad: #eb6263; --good: #4cc07d; --warn-bg: #3a2c12;
+}
+* { box-sizing: border-box; }
+html, body { overflow-x: hidden; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+a { color: var(--accent); }
+.layout { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 20px;
+  max-width: 1440px; margin: 0 auto; padding: 20px 16px 48px; }
+@media (max-width: 960px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+/* sidebar */
+aside { min-width: 0; }
+@media (min-width: 961px) {
+  aside { position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px);
+    overflow-y: auto; padding-right: 4px; scrollbar-width: thin; }
+}
+.brand h1 { font-size: 22px; margin: 0; }
+.brand p { margin: 2px 0 12px; color: var(--muted); font-size: 13px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+button { font: inherit; font-size: 13px; border-radius: 8px; padding: 6px 12px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--card); color: var(--text); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button:hover { filter: brightness(0.97); }
+details.group { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  margin-bottom: 10px; }
+details.group > summary { list-style: none; cursor: pointer; padding: 10px 14px; font-weight: 600;
+  display: flex; justify-content: space-between; align-items: center; }
+details.group > summary::-webkit-details-marker { display: none; }
+details.group > summary::after { content: "▸"; color: var(--muted); transition: transform .15s; }
+details.group[open] > summary::after { transform: rotate(90deg); }
+details.group > summary .changed { font-weight: 500; font-size: 11px; color: var(--accent);
+  margin-left: auto; margin-right: 8px; }
+.fields { padding: 0 14px 12px; }
+.field { display: grid; grid-template-columns: minmax(0, 1fr) 118px; align-items: center;
+  gap: 4px 10px; padding: 5px 0; }
+.field.hidden { display: none; }
+.field label { font-size: 13px; }
+.field .help { grid-column: 1 / -1; color: var(--muted); font-size: 12px; line-height: 1.35; margin-top: -2px; }
+.field input[type=number], .field select {
+  width: 100%; font: inherit; font-size: 14px; padding: 5px 8px; border-radius: 7px;
+  border: 1px solid var(--border); background: var(--field); color: var(--text);
+  font-variant-numeric: tabular-nums; text-align: right; }
+.field select { text-align: left; }
+.field.wide { grid-template-columns: minmax(0, 1fr); }
+.field.wide select { width: 100%; }
+.field input.invalid { border-color: var(--bad); }
+.field.check { grid-template-columns: auto minmax(0, 1fr); justify-content: start; }
+.field.check input { margin: 0; width: 16px; height: 16px; accent-color: var(--accent); }
+.field.range .rangebox { display: flex; gap: 8px; align-items: center; grid-column: 1 / -1; }
+.field.range input[type=range] { flex: 1; accent-color: var(--accent); min-width: 0; }
+.field.range input[type=number] { width: 72px; }
+.unit { color: var(--muted); font-size: 12px; }
+.inwrap { position: relative; }
+.inwrap .pre { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 13px; pointer-events: none; }
+.inwrap .post { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 13px; pointer-events: none; }
+.inwrap.has-post input { padding-right: 24px; }
+.inwrap.has-pre input { padding-left: 18px; }
+.ot { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; padding: 4px 0; }
+.ot input { width: 100%; font: inherit; font-size: 14px; padding: 5px 8px; border-radius: 7px;
+  border: 1px solid var(--border); background: var(--field); color: var(--text); text-align: right; }
+.ot-head { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; color: var(--muted); font-size: 12px; }
+
+/* results */
+main { min-width: 0; }
+.status { display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: 13px; min-height: 22px; }
+.status .spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--border);
+  border-top-color: var(--accent); animation: spin .7s linear infinite; display: none; }
+.status.busy .spin { display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.status .err { color: var(--bad); }
+.sub, .note { color: var(--muted); font-size: 13px; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); }
+.tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); margin: 12px 0 16px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+.tile .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.tile .value { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.2; margin: 4px 0; }
+.tile .delta { font-size: 12px; font-variant-numeric: tabular-nums; }
+.delta.up { color: var(--good); } .delta.down { color: var(--bad); } .delta.flat { color: var(--muted); }
+h2 { font-size: 16px; margin: 0 0 2px; }
+.chart { position: relative; height: 290px; margin-top: 8px; }
+section { margin-top: 16px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 14px; }
+th, td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--border); }
+th:first-child, td:first-child { text-align: left; }
+.tablewrap { overflow-x: auto; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: baseline; }
+.banner { background: var(--warn-bg); border-radius: 10px; padding: 8px 12px; font-size: 13px; margin-top: 8px; display: none; }
+.banner.show { display: block; }
+.about p { margin: 0 0 10px; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <div class="brand">
+      <h1>Retirement Monte Carlo</h1>
+      <p>Change anything below. The simulation reruns on 150 years of US market history.</p>
+    </div>
+    <div class="actions">
+      <button class="primary" id="pin" type="button">Pin as baseline</button>
+      <button id="copy" type="button">Copy link</button>
+      <button id="reset" type="button">Reset</button>
+    </div>
+    <form id="form" autocomplete="off" onsubmit="return false"></form>
+  </aside>
+
+  <main>
+    <div class="status" id="status"><span class="spin"></span><span id="status-text">Loading…</span></div>
+    <div class="sub" id="subtitle"></div>
+    <div class="banner" id="baseline-banner"></div>
+    <div class="tiles" id="tiles"></div>
+
+    <div class="grid" id="fans"></div>
+
+    <section class="grid">
+      <div class="card">
+        <h2 id="sweep-title">Success rate vs. spending</h2>
+        <div class="note" id="sweep-note">Same random paths, different spending levels. The large dot is your plan.</div>
+        <div class="chart"><canvas id="sweep"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>When the money runs out</h2>
+        <div class="note">Share of all paths that hit $0 at each age.</div>
+        <div class="chart"><canvas id="fail"></canvas></div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <h2>Spending each year</h2>
+        <div class="note" id="spend-note"></div>
+        <div class="chart"><canvas id="spend"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Where the money comes from</h2>
+        <div class="note" id="income-note"></div>
+        <div class="chart"><canvas id="income"></canvas></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Ending wealth (today's dollars)</h2>
+      <div class="tablewrap"><table id="ending"></table></div>
+    </section>
+
+    <section class="card about">
+      <h2>How this works</h2>
+      <div class="note" id="about"></div>
+    </section>
+  </main>
+</div>
+
+<script src="history.js"></script>
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
