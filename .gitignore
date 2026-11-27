@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+cache/
+reports/
+.DS_Store
+# PyCharm: share only the run configurations
+.idea/*
+!.idea/runConfigurations/

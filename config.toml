@@ -1,0 +1,20 @@
+# Example plan. All dollar amounts are in today's dollars (the simulation
+# uses inflation-adjusted returns, so a $60,000 withdrawal keeps its buying power).
+
+[plan]
+current_age = 35
+retirement_age = 65
+end_age = 95                 # plan must last until this age
+starting_balance = 100_000
+annual_contribution = 15_000 # added each year until retirement
+annual_withdrawal = 60_000   # taken each year after retirement
+
+[portfolio]
+stocks = 0.60                # rebalanced monthly; stocks + bonds must equal 1
+bonds = 0.40
+
+[simulation]
+paths = 10_000
+seed = 42                    # same seed -> same results
+history_start_year = 1871    # history used by both models
+bootstrap_block_months = 12  # average length of each historical block

@@ -1,0 +1,9 @@
+[project]
+name = "monte-carlo-retirement"
+version = "0.1.0"
+description = "Monte Carlo retirement simulator: GBM vs. historical bootstrap"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

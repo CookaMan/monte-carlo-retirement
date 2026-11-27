@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retirement Monte Carlo</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #f7f7f5; --card: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --border: #e3e3e0;
+  --gbm: #3b6fd4; --boot: #d4733b; --bad: #c43d3d; --good: #2e8b57;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141416; --card: #1e1e21; --text: #ececee; --muted: #9a9aa2; --border: #2e2e33;
+    --gbm: #6f9bf0; --boot: #f09a65; --bad: #e46a6a; --good: #5cc28a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141416; --card: #1e1e21; --text: #ececee; --muted: #9a9aa2; --border: #2e2e33;
+  --gbm: #6f9bf0; --boot: #f09a65; --bad: #e46a6a; --good: #5cc28a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 24px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 0 0 4px; }
+.sub, .note { color: var(--muted); font-size: 13px; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); }
+.tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin: 20px 0; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+.tile .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.tile .value { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.chart { position: relative; height: 300px; margin-top: 8px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 14px; }
+th, td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--border); }
+th:first-child, td:first-child { text-align: left; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+section { margin-top: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Retirement Monte Carlo</h1>
+  <div class="sub" id="subtitle"></div>
+  <div class="tiles" id="tiles"></div>
+
+  <div class="grid" id="fans"></div>
+
+  <section class="grid">
+    <div class="card">
+      <h2>Success rate vs. spending</h2>
+      <div class="note">Same random paths, different annual withdrawals.</div>
+      <div class="chart"><canvas id="sweep"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>When the money runs out</h2>
+      <div class="note">Share of all paths that hit $0 at each age.</div>
+      <div class="chart"><canvas id="fail"></canvas></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Ending wealth (today's dollars)</h2>
+    <table id="ending"></table>
+  </section>
+
+  <section class="card">
+    <h2>About the models</h2>
+    <p class="note" id="about"></p>
+  </section>
+</main>
+
+<script>
+const D = /*__DATA__*/null;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const money = v => v === 0 ? "$0" : v >= 1e6 ? "$" + (v / 1e6).toFixed(2) + "M" : "$" + Math.round(v / 1e3) + "k";
+const pct = v => (v * 100).toFixed(1) + "%";
+const alpha = (hex, a) => hex + Math.round(a * 255).toString(16).padStart(2, "0");
+const colors = [css("--gbm"), css("--boot")];
+Chart.defaults.color = css("--muted");
+Chart.defaults.borderColor = css("--border");
+Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+
+const p = D.config.plan, s = D.config.simulation, port = D.config.portfolio;
+document.getElementById("subtitle").textContent =
+  `Age ${p.current_age} → retire at ${p.retirement_age} → last to ${p.end_age} · ` +
+  `${Math.round(port.stocks * 100)}/${Math.round(port.bonds * 100)} stocks/bonds · ` +
+  `withdraw ${money(p.annual_withdrawal)}/yr · ${s.paths.toLocaleString()} paths · ${D.generated}`;
+
+const tiles = [];
+D.models.forEach((m, i) => {
+  tiles.push([`<span class="dot" style="background:${colors[i]}"></span>${m.name}`, pct(m.success), "chance the money lasts"]);
+});
+tiles.push(["Median at retirement", money(D.models[1].median_at_retirement), "historical bootstrap"]);
+tiles.push(["Median at end", money(D.models[1].ending[50]), "historical bootstrap"]);
+document.getElementById("tiles").innerHTML = tiles.map(([l, v, n]) =>
+  `<div class="card tile"><div class="label">${l}</div><div class="value">${v}</div><div class="note">${n}</div></div>`).join("");
+
+const moneyAxis = { ticks: { callback: v => money(v) }, beginAtZero: true };
+const ageAxis = { title: { display: true, text: "Age" }, ticks: { maxTicksLimit: 10 } };
+
+// Fan charts, one per model, sharing a y-axis max so they compare fairly.
+const rawMax = Math.max(...D.models.map(m => Math.max(...m.bands[95])));
+const step = rawMax > 2e6 ? 1e6 : 1e5;
+const yMax = Math.ceil(rawMax / step) * step;
+const fans = document.getElementById("fans");
+D.models.forEach((m, i) => {
+  const c = colors[i];
+  fans.insertAdjacentHTML("beforeend",
+    `<div class="card"><h2>${m.name}</h2><div class="note">Shaded: 5th–95th and 25th–75th percentile wealth. Dashed: a 1-in-100 bad path.</div><div class="chart"><canvas id="fan${i}"></canvas></div></div>`);
+  const line = (label, data, extra) => Object.assign({ label, data, pointRadius: 0, borderWidth: 0, tension: .2 }, extra);
+  new Chart(document.getElementById("fan" + i), {
+    type: "line",
+    data: { labels: D.ages, datasets: [
+      line("5th", m.bands[5]),
+      line("95th", m.bands[95], { fill: "-1", backgroundColor: alpha(c, .15) }),
+      line("25th", m.bands[25]),
+      line("75th", m.bands[75], { fill: "-1", backgroundColor: alpha(c, .3) }),
+      line("Median", m.bands[50], { borderColor: c, borderWidth: 2.5 }),
+      line("1-in-100", m.worst, { borderColor: css("--bad"), borderWidth: 1.5, borderDash: [5, 4] }),
+    ]},
+    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: x => `${x.dataset.label}: ${money(x.raw)}` } } },
+      scales: { x: ageAxis, y: Object.assign({ max: yMax }, moneyAxis) } }
+  });
+});
+
+new Chart(document.getElementById("sweep"), {
+  type: "line",
+  data: { labels: D.sweep_withdrawals.map(money), datasets: D.models.map((m, i) => ({
+    label: m.name, data: m.sweep, borderColor: colors[i], backgroundColor: colors[i], tension: .2 })) },
+  options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+    plugins: { tooltip: { callbacks: { label: x => `${x.dataset.label}: ${pct(x.raw)}` } } },
+    scales: { x: { title: { display: true, text: "Annual withdrawal" } },
+              y: { min: 0, max: 1, ticks: { callback: v => Math.round(v * 100) + "%" } } } }
+});
+
+new Chart(document.getElementById("fail"), {
+  type: "bar",
+  data: { labels: D.ages.slice(0, -1), datasets: D.models.map((m, i) => ({
+    label: m.name, data: m.failure_years, backgroundColor: colors[i] })) },
+  options: { responsive: true, maintainAspectRatio: false,
+    plugins: { tooltip: { callbacks: { label: x => `${x.dataset.label}: ${pct(x.raw)}` } } },
+    scales: { x: ageAxis, y: { ticks: { callback: v => (v * 100).toFixed(1) + "%" } } } }
+});
+
+const ps = Object.keys(D.models[0].ending);
+document.getElementById("ending").innerHTML =
+  `<tr><th>Percentile</th>${D.models.map((m, i) => `<th><span class="dot" style="background:${colors[i]}"></span>${m.name}</th>`).join("")}</tr>` +
+  ps.map(k => `<tr><td>${k}${k == 1 ? "st" : "th"}</td>${D.models.map(m => `<td>${money(m.ending[k])}</td>`).join("")}</tr>`).join("");
+
+const h = D.history;
+document.getElementById("about").innerHTML =
+  `Both models use US real (inflation-adjusted) total returns from Robert Shiller's dataset, ${h.start} to ${h.end} ` +
+  `(${h.months.toLocaleString()} months). Stocks returned ${pct(h.ann_return.stocks)}/yr with ${pct(h.ann_vol.stocks)} volatility; ` +
+  `bonds ${pct(h.ann_return.bonds)}/yr with ${pct(h.ann_vol.bonds)}; correlation ${h.corr.toFixed(2)}.<br><br>` +
+  `<b>GBM</b> draws each month's log-returns from a normal distribution with the historical mean and covariance. ` +
+  `It has no fat tails and no memory. <b>Historical bootstrap</b> replays real stretches of history ` +
+  `(blocks averaging ${s.bootstrap_block_months} months, stitched together at random), so it keeps crashes, ` +
+  `inflation spells and stock/bond co-movement. Where the two disagree, the cause is that real-world structure.<br><br>` +
+  `The portfolio is rebalanced monthly, with no taxes or fees. The past is one sample of what's possible, not a forecast.`;
+</script>
+</body>
+</html>
